@@ -1,219 +1,135 @@
 import streamlit as st
+import pandas as pd
+import firebase_admin
+from firebase_admin import credentials, firestore
 
-def intro():
-    import streamlit as st
+# --- Firebase Init ---
+if not firebase_admin._apps:
+    cred = credentials.Certificate("latex.json")
+    firebase_admin.initialize_app(cred)
+db = firestore.client()
 
-    st.write("# Welcome to Streamlit! 👋")
-    st.sidebar.success("Select a demo above.")
+# --- Helpers ---
+def extract_dollar_sections(text):
+    dollar_sections = re.findall(r'(\$.*?\$)', text)
+    modified = text
+    latex_map = {}
+    for i, section in enumerate(dollar_sections, 1):
+        placeholder = f"F{i}"
+        modified = modified.replace(section, placeholder, 1)
+        latex_map[placeholder] = section[1:-1]
+    return latex_map, modified
 
-    st.markdown(
-        """
-        Streamlit
-    """
-    )
+def replace_placeholders(modified, latex_map):
+    for key, val in latex_map.items():
+        modified = modified.replace(key, f"${val}$")
+    return modified
 
-def mapping_demo():
-    import streamlit as st
-    import pandas as pd
-    import pydeck as pdk
+# --- UI ---
+st.title("📘 LaTeX Question Editor")
 
-    from urllib.error import URLError
+question_input = st.text_input("Question", key="Question")
+latex_map, modified_text = extract_dollar_sections(question_input)
 
-    st.markdown(f"# {list(page_names_to_funcs.keys())[2]}")
-    st.write(
-        """
-        This demo shows how to use
-[`st.pydeck_chart`](https://docs.streamlit.io/develop/api-reference/charts/st.pydeck_chart)
-to display geospatial data.
-"""
-    )
+st.write(modified_text)
 
-    @st.cache_data
-    def from_data_file(filename):
-        url = (
-            "http://raw.githubusercontent.com/streamlit/"
-            "example-data/master/hello/v1/%s" % filename
-        )
-        return pd.read_json(url)
+# LaTeX editing section
+edited_latex_map = {}
+for ph in latex_map:
+    val = st.text_input(f"{ph}:", value=latex_map[ph], key=f"latex_{ph}")
+    edited_latex_map[ph] = val
+    st.latex(val)
 
-    try:
-        ALL_LAYERS = {
-            "Bike Rentals": pdk.Layer(
-                "HexagonLayer",
-                data=from_data_file("bike_rental_stats.json"),
-                get_position=["lon", "lat"],
-                radius=200,
-                elevation_scale=4,
-                elevation_range=[0, 1000],
-                extruded=True,
-            ),
-            "Bart Stop Exits": pdk.Layer(
-                "ScatterplotLayer",
-                data=from_data_file("bart_stop_stats.json"),
-                get_position=["lon", "lat"],
-                get_color=[200, 30, 0, 160],
-                get_radius="[exits]",
-                radius_scale=0.05,
-            ),
-            "Bart Stop Names": pdk.Layer(
-                "TextLayer",
-                data=from_data_file("bart_stop_stats.json"),
-                get_position=["lon", "lat"],
-                get_text="name",
-                get_color=[0, 0, 0, 200],
-                get_size=15,
-                get_alignment_baseline="'bottom'",
-            ),
-            "Outbound Flow": pdk.Layer(
-                "ArcLayer",
-                data=from_data_file("bart_path_stats.json"),
-                get_source_position=["lon", "lat"],
-                get_target_position=["lon2", "lat2"],
-                get_source_color=[200, 30, 0, 160],
-                get_target_color=[200, 30, 0, 160],
-                auto_highlight=True,
-                width_scale=0.0001,
-                get_width="outbound",
-                width_min_pixels=3,
-                width_max_pixels=30,
-            ),
-        }
-        st.sidebar.markdown("### Map Layers")
-        selected_layers = [
-            layer
-            for layer_name, layer in ALL_LAYERS.items()
-            if st.sidebar.checkbox(layer_name, True)
-        ]
-        if selected_layers:
-            st.pydeck_chart(
-                pdk.Deck(
-                    map_style="mapbox://styles/mapbox/light-v9",
-                    initial_view_state={
-                        "latitude": 37.76,
-                        "longitude": -122.4,
-                        "zoom": 11,
-                        "pitch": 50,
-                    },
-                    layers=selected_layers,
-                )
-            )
+# Answer Options
+col1, col2, col3, col4 = st.columns(4)
+answer_inputs = {}
+for col, label in zip([col1, col2, col3, col4], ["A", "B", "C", "D"]):
+    with col:
+        val = st.text_input(label, key=f"ans_{label}")
+        answer_inputs[label] = val
+        exps = re.findall(r'\$(.*?)\$', val)
+        if exps:
+            for e in exps:
+                st.latex(e)
         else:
-            st.error("Please choose at least one layer above.")
-    except URLError as e:
-        st.error(
-            """
-            **This demo requires internet access.**
+            st.write(val)
 
-            Connection error: %s
-        """
-            % e.reason
-        )
+# Final reconstructed question
+final_q = replace_placeholders(modified_text, edited_latex_map)
+st.write(final_q)
+st.latex(final_q)
+st.write("")
 
-def plotting_demo():
-    import streamlit as st
-    import time
-    import numpy as np
-
-    st.markdown(f'# {list(page_names_to_funcs.keys())[1]}')
-    st.write(
-        """
-        This demo illustrates a combination of plotting and animation with
-Streamlit. We're generating a bunch of random numbers in a loop for around
-5 seconds. Enjoy!
-"""
-    )
-
-    progress_bar = st.sidebar.progress(0)
-    status_text = st.sidebar.empty()
-    last_rows = np.random.randn(1, 1)
-    chart = st.line_chart(last_rows)
-
-    for i in range(1, 101):
-        new_rows = last_rows[-1, :] + np.random.randn(5, 1).cumsum(axis=0)
-        status_text.text("%i%% Complete" % i)
-        chart.add_rows(new_rows)
-        progress_bar.progress(i)
-        last_rows = new_rows
-        time.sleep(0.05)
-
-    progress_bar.empty()
-
-    # Streamlit widgets automatically run the script from top to bottom. Since
-    # this button is not connected to any other logic, it just causes a plain
-    # rerun.
-    st.button("Re-run")
-
-
-def login():
-
-    login = st.text_input("Login", "")
-    password = st.text_input("Password", "",type="password")
-
-def data_frame_demo():
-    import streamlit as st
-    import pandas as pd
-    import altair as alt
-
-    from urllib.error import URLError
-
-    st.markdown(f"# {list(page_names_to_funcs.keys())[3]}")
-    st.write(
-        """
-        This demo shows how to use `st.write` to visualize Pandas DataFrames.
-
-(Data courtesy of the [UN Data Explorer](http://data.un.org/Explorer.aspx).)
-"""
-    )
-
-    @st.cache_data
-    def get_UN_data():
-        AWS_BUCKET_URL = "http://streamlit-demo-data.s3-us-west-2.amazonaws.com"
-        df = pd.read_csv(AWS_BUCKET_URL + "/agri.csv.gz")
-        return df.set_index("Region")
-
+# --- Delete from Firestore ---
+def delete_from_firestore(doc_id):
     try:
-        df = get_UN_data()
-        countries = st.multiselect(
-            "Choose countries", list(df.index), ["China", "United States of America"]
-        )
-        if not countries:
-            st.error("Please select at least one country.")
-        else:
-            data = df.loc[countries]
-            data /= 1000000.0
-            st.write("### Gross Agricultural Production ($B)", data.sort_index())
+        db.collection("questions").document(doc_id).delete()
+        st.success(f"✅ Deleted question with ID: {doc_id}")
+    except Exception as e:
+        st.error(f"❌ Failed to delete question: {e}")
 
-            data = data.T.reset_index()
-            data = pd.melt(data, id_vars=["index"]).rename(
-                columns={"index": "year", "value": "Gross Agricultural Product ($B)"}
+# --- Handlers ---
+@firestore.transactional
+def add_with_auto_id(transaction, question, answers):
+    counter_ref = db.collection("counters").document("questions")
+    counter_doc = counter_ref.get(transaction=transaction)
+    current_id = counter_doc.get("current") if counter_doc.exists else 0
+    new_id = current_id + 1
+    transaction.set(counter_ref, {"current": new_id})
+    q_ref = db.collection("questions").document(str(new_id))
+    transaction.set(q_ref, {
+        "id": new_id,
+        "Question": question,
+        "A": answers["A"],
+        "B": answers["B"],
+        "C": answers["C"],
+        "D": answers["D"],
+    })
+    return new_id
+
+# --- Buttons ---
+colA, colB = st.columns(2)
+with colA:
+    submitted = st.button("📤 Send to Firebase")
+with colB:
+    st.button("🔄 Reset Form", on_click=lambda: st.session_state.update({"clear_form_flag": True}))
+
+# --- Submission logic ---
+if submitted:
+    if not final_q.strip():
+        st.warning("⚠️ Question cannot be empty.")
+    elif any(not answer.strip() for answer in answer_inputs.values()):
+        st.warning("⚠️ All answers (A, B, C, D) must be filled out.")
+    else:
+        try:
+            transaction = db.transaction()
+            new_id = add_with_auto_id(transaction, final_q, answer_inputs)
+            st.session_state["clear_form_flag"] = True  # Will trigger clear on next run
+            st.success(f"✅ Question saved with ID: {new_id}")
+        except Exception as e:
+            st.error(f"❌ Failed to send question: {e}")
+
+# --- View All Questions ---
+st.subheader("📋 All Questions in Firestore")
+try:
+    docs = db.collection("questions").stream()
+    rows = [{"ID": doc.id, **doc.to_dict()} for doc in docs]
+    
+    if rows:
+        # Create a DataFrame
+        df = pd.DataFrame(rows)
+
+        # Add a "Delete" column with buttons to delete the rows
+        delete_buttons = []
+        for idx, row in df.iterrows():
+            delete_buttons.append(
+                st.button(f"Delete {row['ID']}", key=f"delete_{row['ID']}", on_click=delete_from_firestore, args=(row['ID'],))
             )
-            chart = (
-                alt.Chart(data)
-                .mark_area(opacity=0.3)
-                .encode(
-                    x="year:T",
-                    y=alt.Y("Gross Agricultural Product ($B):Q", stack=None),
-                    color="Region:N",
-                )
-            )
-            st.altair_chart(chart, use_container_width=True)
-    except URLError as e:
-        st.error(
-            """
-            **This demo requires internet access.**
 
-            Connection error: %s
-        """
-            % e.reason
-        )
+        # Display the table
+        edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
 
-page_names_to_funcs = {
-    "—": intro,
-    "Auth":login,
-    "Plotting Demo": plotting_demo,
-    "Mapping Demo": mapping_demo,
-    "DataFrame Demo": data_frame_demo
-}
-
-demo_name = st.sidebar.selectbox("Choose a demo", page_names_to_funcs.keys())
-page_names_to_funcs[demo_name]()
+    else:
+        st.info("No questions found in Firestore.")
+except Exception as e:
+    st.error(f"Failed to load questions: {e}")
