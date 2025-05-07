@@ -1,135 +1,105 @@
 import streamlit as st
+import numpy as np
+import matplotlib.pyplot as plt
 import pandas as pd
-import firebase_admin
-from firebase_admin import credentials, firestore
+from scipy.special import expit  # Logistic function
 
-# --- Firebase Init ---
-if not firebase_admin._apps:
-    cred = credentials.Certificate("latex.json")
-    firebase_admin.initialize_app(cred)
-db = firestore.client()
-
-# --- Helpers ---
-def extract_dollar_sections(text):
-    dollar_sections = re.findall(r'(\$.*?\$)', text)
-    modified = text
-    latex_map = {}
-    for i, section in enumerate(dollar_sections, 1):
-        placeholder = f"F{i}"
-        modified = modified.replace(section, placeholder, 1)
-        latex_map[placeholder] = section[1:-1]
-    return latex_map, modified
-
-def replace_placeholders(modified, latex_map):
-    for key, val in latex_map.items():
-        modified = modified.replace(key, f"${val}$")
-    return modified
-
-# --- UI ---
-st.title("📘 LaTeX Question Editor")
-
-question_input = st.text_input("Question", key="Question")
-latex_map, modified_text = extract_dollar_sections(question_input)
-
-st.write(modified_text)
-
-# LaTeX editing section
-edited_latex_map = {}
-for ph in latex_map:
-    val = st.text_input(f"{ph}:", value=latex_map[ph], key=f"latex_{ph}")
-    edited_latex_map[ph] = val
-    st.latex(val)
-
-# Answer Options
-col1, col2, col3, col4 = st.columns(4)
-answer_inputs = {}
-for col, label in zip([col1, col2, col3, col4], ["A", "B", "C", "D"]):
-    with col:
-        val = st.text_input(label, key=f"ans_{label}")
-        answer_inputs[label] = val
-        exps = re.findall(r'\$(.*?)\$', val)
-        if exps:
-            for e in exps:
-                st.latex(e)
-        else:
-            st.write(val)
-
-# Final reconstructed question
-final_q = replace_placeholders(modified_text, edited_latex_map)
-st.write(final_q)
-st.latex(final_q)
-st.write("")
-
-# --- Delete from Firestore ---
-def delete_from_firestore(doc_id):
-    try:
-        db.collection("questions").document(doc_id).delete()
-        st.success(f"✅ Deleted question with ID: {doc_id}")
-    except Exception as e:
-        st.error(f"❌ Failed to delete question: {e}")
-
-# --- Handlers ---
-@firestore.transactional
-def add_with_auto_id(transaction, question, answers):
-    counter_ref = db.collection("counters").document("questions")
-    counter_doc = counter_ref.get(transaction=transaction)
-    current_id = counter_doc.get("current") if counter_doc.exists else 0
-    new_id = current_id + 1
-    transaction.set(counter_ref, {"current": new_id})
-    q_ref = db.collection("questions").document(str(new_id))
-    transaction.set(q_ref, {
-        "id": new_id,
-        "Question": question,
-        "A": answers["A"],
-        "B": answers["B"],
-        "C": answers["C"],
-        "D": answers["D"],
-    })
-    return new_id
-
-# --- Buttons ---
-colA, colB = st.columns(2)
-with colA:
-    submitted = st.button("📤 Send to Firebase")
-with colB:
-    st.button("🔄 Reset Form", on_click=lambda: st.session_state.update({"clear_form_flag": True}))
-
-# --- Submission logic ---
-if submitted:
-    if not final_q.strip():
-        st.warning("⚠️ Question cannot be empty.")
-    elif any(not answer.strip() for answer in answer_inputs.values()):
-        st.warning("⚠️ All answers (A, B, C, D) must be filled out.")
-    else:
-        try:
-            transaction = db.transaction()
-            new_id = add_with_auto_id(transaction, final_q, answer_inputs)
-            st.session_state["clear_form_flag"] = True  # Will trigger clear on next run
-            st.success(f"✅ Question saved with ID: {new_id}")
-        except Exception as e:
-            st.error(f"❌ Failed to send question: {e}")
-
-# --- View All Questions ---
-st.subheader("📋 All Questions in Firestore")
-try:
-    docs = db.collection("questions").stream()
-    rows = [{"ID": doc.id, **doc.to_dict()} for doc in docs]
+def main():
+    st.title("Rasch Model for Dichotomous Data")
     
-    if rows:
-        # Create a DataFrame
-        df = pd.DataFrame(rows)
+    # --- Mathematical Formulation ---
+    st.markdown("""
+    ## Mathematical Formulation
+    The Rasch model specifies the probability that a person $n$ answers item $i$ correctly as:
+    
+    $$
+    P(X_{ni} = 1 | \\theta_n, \\beta_i) = \\frac{e^{(\\theta_n - \\beta_i)}}{1 + e^{(\\theta_n - \\beta_i)}}
+    $$
+    
+    Where:
+    - $X_{ni}$ is the response (1 = correct, 0 = incorrect)
+    - $\\theta_n$ = ability of person $n$
+    - $\\beta_i$ = difficulty of item $i$
+    """)
+    
+    st.markdown("---")
 
-        # Add a "Delete" column with buttons to delete the rows
-        delete_buttons = []
-        for idx, row in df.iterrows():
-            delete_buttons.append(
-                st.button(f"Delete {row['ID']}", key=f"delete_{row['ID']}", on_click=delete_from_firestore, args=(row['ID'],))
-            )
+    # --- Example Student Data ---
+    st.header("📊 Example Student Data")
+    
+    # Define example students
+    students = [
+        {"Student": "Ali", "θ": -1.2, "Responses": [0, 1, 0]},
+        {"Student": "Vali", "θ": 0.5, "Responses": [1, 1, 0]},
+        {"Student": "Sali", "θ": 2.0, "Responses": [1, 1, 1]}
+    ]
+    
+    # Define example items
+    items = [
+        {"Item": "Q1 (Easy)", "β": -1.0},
+        {"Item": "Q2 (Medium)", "β": 0.0},
+        {"Item": "Q3 (Hard)", "β": 1.5}
+    ]
+    
+    # Display student and item tables side by side
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Students")
+        st.table(pd.DataFrame(students)[["Student", "θ"]])
+    
+    with col2:
+        st.subheader("Items")
+        st.table(pd.DataFrame(items))
+    
+    # --- Interactive Visualization ---
+    st.header("📈 Interactive ICC Curve")
+    
+    # Dropdown to select a student
+    selected_student = st.selectbox(
+        "Select a student:",
+        options=[s["Student"] for s in students],
+        index=0
+    )
+    
+    # Get θ for selected student
+    student_θ = next(s["θ"] for s in students if s["Student"] == selected_student)
+    
+    # Plot ICC for all items
+    θ_range = np.linspace(-3, 3, 100)
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    for item in items:
+        β = item["β"]
+        prob = expit(θ_range - β)
+        ax.plot(θ_range, prob, label=f"{item['Item']} (β={β})")
+    
+    # Mark student's ability level
+    ax.axvline(x=student_θ, color='red', linestyle='--', label=f"{selected_student}'s θ = {student_θ}")
+    ax.set_xlabel("Ability (θ)")
+    ax.set_ylabel("P(X=1)")
+    ax.set_title("Item Characteristic Curves (ICC)")
+    ax.legend()
+    ax.grid(True)
+    
+    st.pyplot(fig)
+    
+    # --- Probability Table for Selected Student ---
+    st.subheader(f"🔍 Predicted Probabilities for {selected_student} (θ = {student_θ})")
+    
+    # Calculate probabilities for each item
+    prob_data = []
+    for item in items:
+        β = item["β"]
+        p = expit(student_θ - β)
+        prob_data.append({
+            "Item": item["Item"],
+            "β": β,
+            "P(X=1)": f"{p:.2f}",
+            "Expected Response": "1" if p >= 0.5 else "0"
+        })
+    
+    st.table(pd.DataFrame(prob_data))
 
-        # Display the table
-        edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
-
-    else:
-        st.info("No questions found in Firestore.")
-except Exception as e:
-    st.error(f"Failed to load questions: {e}")
+if __name__ == "__main__":
+    main()
